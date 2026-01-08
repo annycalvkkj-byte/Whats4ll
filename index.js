@@ -14,10 +14,7 @@ const io = new Server(server);
 app.use(express.json());
 app.use(express.static('public'));
 
-// Conexão Banco de Dados via .env
-mongoose.connect(process.env.MONGO_URI)
-    .then(() => console.log("MongoDB Conectado!"))
-    .catch(err => console.error("Erro MongoDB:", err));
+mongoose.connect(process.env.MONGO_URI);
 
 let sock;
 
@@ -28,7 +25,11 @@ async function startWA() {
         auth: state,
         printQRInTerminal: false,
         logger: pino({ level: "silent" }),
-        browser: Browsers.macOS("Desktop")
+        // MUDANÇA AQUI: Identidade de Chrome estável
+        browser: ["Ubuntu", "Chrome", "20.0.04"],
+        connectTimeoutMs: 60000,
+        keepAliveIntervalMs: 10000, // Força o Render a não dormir
+        emitOwnEvents: true
     });
 
     sock.ev.on("creds.update", saveCreds);
@@ -37,51 +38,47 @@ async function startWA() {
         const { connection, lastDisconnect } = update;
         if (connection === "close") {
             const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
-            if (shouldReconnect) startWA();
+            if (shouldReconnect) {
+                console.log("Tentando reconexão estável...");
+                setTimeout(startWA, 5000);
+            }
         }
+        if (connection === "open") console.log("BOT CONECTADO COM SUCESSO!");
         io.emit("status", connection);
     });
 
     sock.ev.on("messages.upsert", async ({ messages }) => {
         const m = messages[0];
         if (!m.message || m.key.fromMe) return;
-
         const text = m.message.conversation || m.message.extendedTextMessage?.text || "";
         const from = m.key.remoteJid;
-
-        // Salva e avisa o site
         const msgDoc = await Message.create({ from, content: text });
         io.emit("new_message", msgDoc);
-
-        // Auto-resposta
         const reply = await Reply.findOne({ keyword: text.toLowerCase().trim() });
-        if (reply) {
-            await sock.sendMessage(from, { text: reply.response });
-        }
+        if (reply) await sock.sendMessage(from, { text: reply.response });
     });
 }
 
-// Rota para Gerar Código de Pareamento
 app.get("/get-pairing-code", async (req, res) => {
     const num = req.query.number.replace(/[^0-9]/g, "");
-    if (!num) return res.status(400).send("Número inválido");
-    
     try {
+        // Forçar um reinício do socket antes de pedir o código para garantir frescor
+        if (sock) sock.logout(); 
         await delay(2000);
+        await startWA();
+        await delay(5000); // Espera o socket aquecer
+
         const code = await sock.requestPairingCode(num);
         res.json({ code });
     } catch (e) {
-        res.status(500).json({ error: "Erro ao gerar código. Tente de novo." });
+        console.log(e);
+        res.status(500).json({ error: "Ocorreu um erro. Tente novamente em 10 segundos." });
     }
 });
 
-// Rotas do Painel
+// Outras rotas (replies, load-data) continuam iguais...
 app.post("/replies", async (req, res) => {
-    await Reply.findOneAndUpdate(
-        { keyword: req.body.keyword.toLowerCase() },
-        { response: req.body.response },
-        { upsert: true }
-    );
+    await Reply.findOneAndUpdate({ keyword: req.body.keyword.toLowerCase() }, { response: req.body.response }, { upsert: true });
     res.send("Salvo!");
 });
 
@@ -92,4 +89,4 @@ app.get("/load-data", async (req, res) => {
 });
 
 startWA();
-server.listen(process.env.PORT || 3000, () => console.log("Servidor ON"));
+server.listen(process.env.PORT || 3000);
