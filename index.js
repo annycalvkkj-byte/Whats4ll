@@ -3,7 +3,7 @@ const {
     useMultiFileAuthState, 
     delay, 
     DisconnectReason,
-    Browsers // Importante adicionar isso
+    Browsers 
 } = require("@whiskeysockets/baileys");
 const express = require("express");
 const pino = require("pino");
@@ -13,62 +13,65 @@ const port = process.env.PORT || 3000;
 
 app.use(express.static('public'));
 
-async function connectToWhatsApp(phoneNumber, res) {
+let sock; // Socket global para manter a conexão viva
+
+async function startWhatsApp() {
     const { state, saveCreds } = await useMultiFileAuthState('auth_info');
     
-    const sock = makeWASocket({
+    sock = makeWASocket({
         auth: state,
         printQRInTerminal: false,
         logger: pino({ level: "silent" }),
-        // ESSA LINHA ABAIXO É ESSENCIAL PARA EVITAR O ERRO 428
-        browser: Browsers.ubuntu("Chrome"), 
-        syncFullHistory: false
+        browser: Browsers.macOS("Desktop"), // Mudamos para MacOS para testar outra assinatura
+        connectTimeoutMs: 60000, // Aumentamos o tempo limite
+        defaultQueryTimeoutMs: 0,
+        keepAliveIntervalMs: 10000,
     });
 
     sock.ev.on("creds.update", saveCreds);
 
-    sock.ev.on("connection.update", async (update) => {
+    sock.ev.on("connection.update", (update) => {
         const { connection, lastDisconnect } = update;
-        
         if (connection === "close") {
-            const shouldReconnect = lastDisconnect.error?.output?.statusCode !== DisconnectReason.loggedOut;
-            console.log("Conexão fechada. Tentando reconectar...", shouldReconnect);
-            // Se der erro, não fazemos nada aqui para não bugar a resposta do site
+            const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
+            console.log("Conexão caiu. Tentando reabrir em 5s...");
+            setTimeout(startWhatsApp, 5000);
+        } else if (connection === "open") {
+            console.log("=== BOT ONLINE E PRONTO ===");
         }
     });
 
-    // Espera o socket estabilizar antes de pedir o código
-    if (!sock.authState.creds.registered) {
-        try {
-            // Aumentamos o delay para 6 segundos para dar tempo do servidor estabilizar
-            await delay(6000); 
-            
-            const code = await sock.requestPairingCode(phoneNumber);
-            if (!res.headersSent) {
-                res.json({ code });
-            }
-        } catch (error) {
-            console.error("Erro ao gerar código:", error);
-            if (!res.headersSent) {
-                res.status(500).json({ error: "O servidor fechou a conexão. Tente clicar no botão novamente em 10 segundos." });
-            }
-        }
-    } else {
-        if (!res.headersSent) {
-            res.json({ message: "O bot já está conectado!" });
-        }
-    }
+    return sock;
 }
+
+// Inicia o bot assim que o servidor ligar
+startWhatsApp();
 
 app.get("/get-code", async (req, res) => {
     const num = req.query.number;
-    if (!num) return res.status(400).json({ error: "Número é obrigatório" });
-    
-    // Remove caracteres especiais e espaços
+    if (!num) return res.status(400).json({ error: "Número faltando" });
     const cleanNumber = num.replace(/[^0-9]/g, "");
-    await connectToWhatsApp(cleanNumber, res);
+
+    try {
+        // Se o socket não existir ou estiver fechado, tenta reiniciar
+        if (!sock) await startWhatsApp();
+        
+        console.log(`Solicitando código para: ${cleanNumber}`);
+        
+        // Pequena espera para garantir que o socket processou o comando
+        await delay(3000);
+        
+        const code = await sock.requestPairingCode(cleanNumber);
+        res.json({ code });
+    } catch (error) {
+        console.error("Erro detalhado:", error);
+        res.status(500).json({ 
+            error: "O WhatsApp recusou a conexão momentaneamente.",
+            details: "Aguarde 15 segundos e clique no botão novamente sem recarregar a página." 
+        });
+    }
 });
 
 app.listen(port, () => {
-    console.log(`Servidor online na porta ${port}`);
+    console.log(`Servidor rodando na porta ${port}`);
 });
