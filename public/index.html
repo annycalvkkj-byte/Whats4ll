@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Painel do Bot</title>
+    <style>
+        body { font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; background: #f0f2f5; }
+        .card { background: white; padding: 2rem; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); text-align: center; }
+        input { padding: 10px; width: 80%; margin-bottom: 10px; border: 1px solid #ccc; border-radius: 5px; }
+        button { padding: 10px 20px; background: #25d366; color: white; border: none; border-radius: 5px; cursor: pointer; }
+        #codeDisplay { font-size: 2rem; font-weight: bold; color: #075e54; margin-top: 20px; letter-spacing: 5px; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h2>Conectar Bot WhatsApp</h2>
+        <p>Digite seu número com DDI (ex: 5511999999999)</p>
+        <input type="text" id="phone" placeholder="5511999999999">
+        <br>
+        <button onclick="generateCode()">Gerar Código de Pareamento</button>
+        <div id="codeDisplay"></div>
+        <p id="status"></p>
+    </div>
+
+    <script>
+        async function generateCode() {
+            const num = document.getElementById('phone').value;
+            const status = document.getElementById('status');
+            const codeDisplay = document.getElementById('codeDisplay');
+            
+            if(!num) return alert("Digite o número!");
+            
+            status.innerText = "Gerando código... aguarde.";
+            codeDisplay.innerText = "";
+
+            try {
+                const response = await fetch(`/get-code?number=${num}`);
+                const data = await response.json();
+                
+                if(data.code) {
+                    codeDisplay.innerText = data.code;
+                    status.innerText = "Agora vá no WhatsApp > Aparelhos Conectados > Conectar com número de telefone e digite o código acima.";
+                } else {
+                    status.innerText = data.message || "Erro ao gerar código.";
+                }
+            } catch (err) {
+                status.innerText = "Erro de conexão com o servidor.";
+            }
+        }
+    </script>
+</body>
+</html>
