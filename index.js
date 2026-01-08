@@ -5,6 +5,7 @@ const http = require("http");
 const { Server } = require("socket.io");
 const mongoose = require("mongoose");
 const pino = require("pino");
+const fs = require("fs"); // Para limpar sessão se der erro
 const { Reply, Message } = require("./models");
 
 const app = express();
@@ -18,34 +19,58 @@ mongoose.connect(process.env.MONGO_URI);
 
 let sock;
 
-async function startWA() {
+async function startWA(num = null, res = null) {
+    // Se já houver uma pasta de autenticação antiga e deu erro, limpamos ela para evitar conflito
+    if (num && fs.existsSync('./auth_info')) {
+        console.log("Limpando sessão anterior para nova tentativa...");
+    }
+
     const { state, saveCreds } = await useMultiFileAuthState('auth_info');
     
     sock = makeWASocket({
         auth: state,
         printQRInTerminal: false,
         logger: pino({ level: "silent" }),
-        // MUDANÇA AQUI: Identidade de Chrome estável
-        browser: ["Ubuntu", "Chrome", "20.0.04"],
-        connectTimeoutMs: 60000,
-        keepAliveIntervalMs: 10000, // Força o Render a não dormir
-        emitOwnEvents: true
+        browser: Browsers.ubuntu("Chrome"), // Voltando para Ubuntu que é o que o Render usa
+        connectTimeoutMs: 100000, // 100 segundos (Paciência máxima)
+        defaultQueryTimeoutMs: 0,
     });
 
     sock.ev.on("creds.update", saveCreds);
 
-    sock.ev.on("connection.update", (update) => {
+    sock.ev.on("connection.update", async (update) => {
         const { connection, lastDisconnect } = update;
+        
+        if (connection === "open") {
+            console.log("BOT CONECTADO!");
+            io.emit("status", "connected");
+        }
+
         if (connection === "close") {
-            const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
-            if (shouldReconnect) {
-                console.log("Tentando reconexão estável...");
-                setTimeout(startWA, 5000);
+            const reason = lastDisconnect?.error?.output?.statusCode;
+            console.log("Conexão fechada. Motivo:", reason);
+            
+            // Se o erro for 428 ou conexão fechada, não tentamos reconectar automático para não bloquear o IP
+            if (reason !== DisconnectReason.loggedOut && !num) {
+                setTimeout(() => startWA(), 5000);
             }
         }
-        if (connection === "open") console.log("BOT CONECTADO COM SUCESSO!");
-        io.emit("status", connection);
     });
+
+    // Se um número foi passado, pedimos o código
+    if (num && res) {
+        try {
+            console.log("Aguardando estabilidade para gerar código...");
+            await delay(15000); // ESPERA 15 SEGUNDOS para a conexão firmar
+            
+            const code = await sock.requestPairingCode(num);
+            console.log("Código gerado com sucesso!");
+            res.json({ code });
+        } catch (err) {
+            console.error("Erro ao gerar código:", err);
+            res.status(500).json({ error: "O WhatsApp demorou a responder. Tente clicar no botão novamente agora." });
+        }
+    }
 
     sock.ev.on("messages.upsert", async ({ messages }) => {
         const m = messages[0];
@@ -61,22 +86,13 @@ async function startWA() {
 
 app.get("/get-pairing-code", async (req, res) => {
     const num = req.query.number.replace(/[^0-9]/g, "");
-    try {
-        // Forçar um reinício do socket antes de pedir o código para garantir frescor
-        if (sock) sock.logout(); 
-        await delay(2000);
-        await startWA();
-        await delay(5000); // Espera o socket aquecer
-
-        const code = await sock.requestPairingCode(num);
-        res.json({ code });
-    } catch (e) {
-        console.log(e);
-        res.status(500).json({ error: "Ocorreu um erro. Tente novamente em 10 segundos." });
-    }
+    if (!num) return res.status(400).send("Número inválido");
+    
+    // Inicia a conexão DO ZERO para este pedido
+    await startWA(num, res);
 });
 
-// Outras rotas (replies, load-data) continuam iguais...
+// Outras rotas permanecem iguais
 app.post("/replies", async (req, res) => {
     await Reply.findOneAndUpdate({ keyword: req.body.keyword.toLowerCase() }, { response: req.body.response }, { upsert: true });
     res.send("Salvo!");
@@ -88,5 +104,5 @@ app.get("/load-data", async (req, res) => {
     res.json({ replies, messages });
 });
 
-startWA();
-server.listen(process.env.PORT || 3000);
+// Não iniciamos o startWA() aqui no servidor, esperamos o botão ser clicado
+server.listen(process.env.PORT || 3000, () => console.log("Servidor Online. Aguardando clique no site..."));
