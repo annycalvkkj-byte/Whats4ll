@@ -13,7 +13,7 @@ app.use(express.json());
 app.use(express.static('public'));
 
 // Conecte ao seu MongoDB (Pegue o link no MongoDB Atlas)
-mongoose.connect("SUA_URL_DO_MONGODB_AQUI");
+mongoose.connect("mongodb+srv://Admin_Franjinha37363:Hi8s0LPGtwZyjylr@cluster0.fyv0xoz.mongodb.net/?appName=Cluster0");
 
 let sock;
 
