@@ -2,12 +2,11 @@ const {
     default: makeWASocket, 
     useMultiFileAuthState, 
     delay, 
-    DisconnectReason 
+    DisconnectReason,
+    Browsers // Importante adicionar isso
 } = require("@whiskeysockets/baileys");
 const express = require("express");
-const path = require("path");
 const pino = require("pino");
-const fs = require("fs");
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -20,50 +19,56 @@ async function connectToWhatsApp(phoneNumber, res) {
     const sock = makeWASocket({
         auth: state,
         printQRInTerminal: false,
-        logger: pino({ level: "silent" })
+        logger: pino({ level: "silent" }),
+        // ESSA LINHA ABAIXO É ESSENCIAL PARA EVITAR O ERRO 428
+        browser: Browsers.ubuntu("Chrome"), 
+        syncFullHistory: false
     });
 
     sock.ev.on("creds.update", saveCreds);
 
-    sock.ev.on("connection.update", (update) => {
+    sock.ev.on("connection.update", async (update) => {
         const { connection, lastDisconnect } = update;
+        
         if (connection === "close") {
             const shouldReconnect = lastDisconnect.error?.output?.statusCode !== DisconnectReason.loggedOut;
-            console.log("Conexão fechada. Reconectando:", shouldReconnect);
-        } else if (connection === "open") {
-            console.log("Bot Conectado!");
+            console.log("Conexão fechada. Tentando reconectar...", shouldReconnect);
+            // Se der erro, não fazemos nada aqui para não bugar a resposta do site
         }
     });
 
-    // Se não estiver registrado, solicita o código
+    // Espera o socket estabilizar antes de pedir o código
     if (!sock.authState.creds.registered) {
-        if (!phoneNumber) {
-            return res.status(400).json({ error: "Número não fornecido" });
-        }
-
         try {
-            await delay(3000); // Espera o socket inicializar
+            // Aumentamos o delay para 6 segundos para dar tempo do servidor estabilizar
+            await delay(6000); 
+            
             const code = await sock.requestPairingCode(phoneNumber);
-            res.json({ code });
+            if (!res.headersSent) {
+                res.json({ code });
+            }
         } catch (error) {
-            console.error(error);
-            res.status(500).json({ error: "Erro ao gerar código" });
+            console.error("Erro ao gerar código:", error);
+            if (!res.headersSent) {
+                res.status(500).json({ error: "O servidor fechou a conexão. Tente clicar no botão novamente em 10 segundos." });
+            }
         }
     } else {
-        res.json({ message: "O bot já está conectado!" });
+        if (!res.headersSent) {
+            res.json({ message: "O bot já está conectado!" });
+        }
     }
 }
 
-// Rota para o Frontend pedir o código
 app.get("/get-code", async (req, res) => {
     const num = req.query.number;
     if (!num) return res.status(400).json({ error: "Número é obrigatório" });
-    await connectToWhatsApp(num.replace(/[^0-9]/g, ""), res);
+    
+    // Remove caracteres especiais e espaços
+    const cleanNumber = num.replace(/[^0-9]/g, "");
+    await connectToWhatsApp(cleanNumber, res);
 });
 
-// Rota para responder mensagens (Teste)
-// sock.ev.on("messages.upsert", async m => { ... }); 
-
 app.listen(port, () => {
-    console.log(`Servidor rodando em http://localhost:${port}`);
+    console.log(`Servidor online na porta ${port}`);
 });
