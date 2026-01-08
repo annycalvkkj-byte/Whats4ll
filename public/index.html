@@ -1,53 +1,79 @@
 <!DOCTYPE html>
-<html lang="pt-br">
+<html>
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Painel do Bot</title>
+    <title>Bot Manager</title>
+    <script src="/socket.io/socket.io.js"></script>
     <style>
-        body { font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; background: #f0f2f5; }
-        .card { background: white; padding: 2rem; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); text-align: center; }
-        input { padding: 10px; width: 80%; margin-bottom: 10px; border: 1px solid #ccc; border-radius: 5px; }
-        button { padding: 10px 20px; background: #25d366; color: white; border: none; border-radius: 5px; cursor: pointer; }
-        #codeDisplay { font-size: 2rem; font-weight: bold; color: #075e54; margin-top: 20px; letter-spacing: 5px; }
+        body { font-family: sans-serif; background: #e5ddd5; margin: 0; display: flex; flex-direction: column; height: 100vh; }
+        header { background: #075e54; color: white; padding: 15px; text-align: center; }
+        .main { display: flex; flex: 1; overflow: hidden; padding: 10px; gap: 10px; }
+        .section { background: white; border-radius: 8px; padding: 15px; display: flex; flex-direction: column; }
+        #chat { flex: 2; overflow-y: auto; }
+        #config { flex: 1; }
+        .msg { background: #dcf8c6; padding: 8px; border-radius: 5px; margin-bottom: 5px; border: 1px solid #ced4da; }
+        input, button { padding: 10px; margin-top: 5px; border: 1px solid #ddd; border-radius: 4px; }
+        button { background: #25d366; color: white; font-weight: bold; cursor: pointer; border: none; }
     </style>
 </head>
 <body>
-    <div class="card">
-        <h2>Conectar Bot WhatsApp</h2>
-        <p>Digite seu número com DDI (ex: 5511999999999)</p>
-        <input type="text" id="phone" placeholder="5511999999999">
-        <br>
-        <button onclick="generateCode()">Gerar Código de Pareamento</button>
-        <div id="codeDisplay"></div>
-        <p id="status"></p>
+    <header><h1>Controle do Bot WhatsApp</h1></header>
+    
+    <div style="padding: 10px; text-align: center; background: #fff;">
+        <input id="phone" placeholder="5511999999999">
+        <button onclick="getPairingCode()">Vincular Novo Número</button>
+        <h2 id="pairDisplay" style="color: red; letter-spacing: 3px;"></h2>
+    </div>
+
+    <div class="main">
+        <div id="config" class="section">
+            <h3>Mensagens Automáticas</h3>
+            <input id="key" placeholder="Se o usuário disser...">
+            <input id="resp" placeholder="Bot responde...">
+            <button onclick="saveReply()">Adicionar Regra</button>
+            <div id="replyList" style="margin-top: 10px; font-size: 0.8em;"></div>
+        </div>
+
+        <div id="chat" class="section">
+            <h3>Mensagens em Tempo Real</h3>
+            <div id="messages"></div>
+        </div>
     </div>
 
     <script>
-        async function generateCode() {
+        const socket = io();
+        
+        async function getPairingCode() {
             const num = document.getElementById('phone').value;
-            const status = document.getElementById('status');
-            const codeDisplay = document.getElementById('codeDisplay');
-            
-            if(!num) return alert("Digite o número!");
-            
-            status.innerText = "Gerando código... aguarde.";
-            codeDisplay.innerText = "";
-
-            try {
-                const response = await fetch(`/get-code?number=${num}`);
-                const data = await response.json();
-                
-                if(data.code) {
-                    codeDisplay.innerText = data.code;
-                    status.innerText = "Agora vá no WhatsApp > Aparelhos Conectados > Conectar com número de telefone e digite o código acima.";
-                } else {
-                    status.innerText = data.message || "Erro ao gerar código.";
-                }
-            } catch (err) {
-                status.innerText = "Erro de conexão com o servidor.";
-            }
+            const res = await fetch(`/get-pairing-code?number=${num}`);
+            const data = await res.json();
+            document.getElementById('pairDisplay').innerText = data.code || data.error;
         }
+
+        async function saveReply() {
+            const keyword = document.getElementById('key').value;
+            const response = document.getElementById('resp').value;
+            await fetch('/replies', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ keyword, response })
+            });
+            location.reload();
+        }
+
+        socket.on("new_message", (msg) => {
+            const div = document.getElementById('messages');
+            div.innerHTML = `<div class="msg"><b>${msg.from}:</b> ${msg.content}</div>` + div.innerHTML;
+        });
+
+        // Carrega dados iniciais
+        fetch('/load-data').then(r => r.json()).then(data => {
+            data.messages.forEach(msg => {
+                document.getElementById('messages').innerHTML += `<div class="msg"><b>${msg.from}:</b> ${msg.content}</div>`;
+            });
+            data.replies.forEach(r => {
+                document.getElementById('replyList').innerHTML += `<div><b>${r.keyword}:</b> ${r.response}</div>`;
+            });
+        });
     </script>
 </body>
 </html>
