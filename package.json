@@ -1,16 +1,16 @@
 {
-  "name": "whatsapp-pairing-bot",
+  "name": "whatsapp-bot-dashboard",
   "version": "1.0.0",
-  "description": "Bot WhatsApp com código de pareamento",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
-  "@whiskeysockets/baileys": "^6.6.0",
-  "express": "^4.18.2",
-  "mongoose": "^7.0.0",
-  "socket.io": "^4.6.1",
-  "pino": "^8.14.1"
+    "@whiskeysockets/baileys": "^6.6.0",
+    "express": "^4.18.2",
+    "mongoose": "^7.0.0",
+    "socket.io": "^4.6.1",
+    "dotenv": "^16.3.1",
+    "pino": "^8.14.1"
   }
 }
