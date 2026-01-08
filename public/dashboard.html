@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Dashboard Bot</title>
+    <script src="/socket.io/socket.io.js"></script>
+    <style>
+        .container { display: flex; gap: 20px; padding: 20px; font-family: sans-serif; }
+        .box { border: 1px solid #ccc; padding: 15px; width: 50%; border-radius: 8px; }
+        #messageList { height: 300px; overflow-y: auto; background: #f9f9f9; padding: 10px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Configuração -->
+        <div class="box">
+            <h3>Configurar Auto-Resposta</h3>
+            <input id="key" placeholder="Palavra-chave (ex: oi)">
+            <input id="resp" placeholder="Resposta">
+            <button onclick="saveConfig()">Salvar</button>
+        </div>
+
+        <!-- Chat em Tempo Real -->
+        <div class="box">
+            <h3>Mensagens Recentes</h3>
+            <div id="messageList"></div>
+        </div>
+    </div>
+
+    <script>
+        const socket = io();
+        const list = document.getElementById('messageList');
+
+        // Recebe mensagem em tempo real do WhatsApp
+        socket.on("new_message", (data) => {
+            const item = document.createElement('p');
+            item.innerHTML = `<b>${data.from}:</b> ${data.text}`;
+            list.prepend(item);
+        });
+
+        async function saveConfig() {
+            const keyword = document.getElementById('key').value;
+            const response = document.getElementById('resp').value;
+            await fetch('/add-keyword', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ keyword, response })
+            });
+            alert("Bot configurado!");
+        }
+    </script>
+</body>
+</html>
