@@ -1,77 +1,68 @@
-const { 
-    default: makeWASocket, 
-    useMultiFileAuthState, 
-    delay, 
-    DisconnectReason,
-    Browsers 
-} = require("@whiskeysockets/baileys");
+const { default: makeWASocket, useMultiFileAuthState, Browsers } = require("@whiskeysockets/baileys");
 const express = require("express");
-const pino = require("pino");
+const http = require("http");
+const { Server } = require("socket.io");
+const mongoose = require("mongoose");
+const { Reply, Message } = require("./models");
 
 const app = express();
-const port = process.env.PORT || 3000;
+const server = http.createServer(app);
+const io = new Server(server);
 
+app.use(express.json());
 app.use(express.static('public'));
 
-let sock; // Socket global para manter a conexão viva
+// Conecte ao seu MongoDB (Pegue o link no MongoDB Atlas)
+mongoose.connect("SUA_URL_DO_MONGODB_AQUI");
 
-async function startWhatsApp() {
+let sock;
+
+async function connectWA() {
     const { state, saveCreds } = await useMultiFileAuthState('auth_info');
-    
     sock = makeWASocket({
         auth: state,
-        printQRInTerminal: false,
-        logger: pino({ level: "silent" }),
-        browser: Browsers.macOS("Desktop"), // Mudamos para MacOS para testar outra assinatura
-        connectTimeoutMs: 60000, // Aumentamos o tempo limite
-        defaultQueryTimeoutMs: 0,
-        keepAliveIntervalMs: 10000,
+        browser: Browsers.macOS("Desktop"),
+        syncFullHistory: true
     });
 
     sock.ev.on("creds.update", saveCreds);
 
-    sock.ev.on("connection.update", (update) => {
-        const { connection, lastDisconnect } = update;
-        if (connection === "close") {
-            const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
-            console.log("Conexão caiu. Tentando reabrir em 5s...");
-            setTimeout(startWhatsApp, 5000);
-        } else if (connection === "open") {
-            console.log("=== BOT ONLINE E PRONTO ===");
+    // ESCUTANDO MENSAGENS
+    sock.ev.on("messages.upsert", async ({ messages }) => {
+        const m = messages[0];
+        if (!m.message || m.key.fromMe) return;
+
+        const text = m.message.conversation || m.message.extendedTextMessage?.text;
+        const from = m.key.remoteJid;
+
+        // 1. Salva no banco de dados
+        await Message.create({ from, content: text });
+
+        // 2. Envia para o painel do site via Socket.io
+        io.emit("new_message", { from, text });
+
+        // 3. Lógica de Auto-Resposta
+        const autoReply = await Reply.findOne({ keyword: text.toLowerCase() });
+        if (autoReply) {
+            await sock.sendMessage(from, { text: autoReply.response });
         }
     });
-
-    return sock;
 }
 
-// Inicia o bot assim que o servidor ligar
-startWhatsApp();
-
-app.get("/get-code", async (req, res) => {
-    const num = req.query.number;
-    if (!num) return res.status(400).json({ error: "Número faltando" });
-    const cleanNumber = num.replace(/[^0-9]/g, "");
-
-    try {
-        // Se o socket não existir ou estiver fechado, tenta reiniciar
-        if (!sock) await startWhatsApp();
-        
-        console.log(`Solicitando código para: ${cleanNumber}`);
-        
-        // Pequena espera para garantir que o socket processou o comando
-        await delay(3000);
-        
-        const code = await sock.requestPairingCode(cleanNumber);
-        res.json({ code });
-    } catch (error) {
-        console.error("Erro detalhado:", error);
-        res.status(500).json({ 
-            error: "O WhatsApp recusou a conexão momentaneamente.",
-            details: "Aguarde 15 segundos e clique no botão novamente sem recarregar a página." 
-        });
-    }
+// Rota para salvar nova configuração de mensagem automática pelo site
+app.post("/add-keyword", async (req, res) => {
+    const { keyword, response } = req.body;
+    await Reply.create({ keyword: keyword.toLowerCase(), response });
+    res.send("Configuração salva!");
 });
 
-app.listen(port, () => {
-    console.log(`Servidor rodando na porta ${port}`);
+// Rota para ver as mensagens salvas
+app.get("/messages", async (req, res) => {
+    const msgs = await Message.find().sort({ timestamp: -1 }).limit(20);
+    res.json(msgs);
+});
+
+server.listen(3000, () => {
+    connectWA();
+    console.log("Servidor e Bot ativos!");
 });
